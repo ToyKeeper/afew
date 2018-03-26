@@ -34,7 +34,7 @@ class MailMover(Database):
     '''
 
 
-    def __init__(self, max_age=0, rename = False, dry_run=False):
+    def __init__(self, max_age=0, rename = False, dry_run=False, only_first_rule=True):
         super(MailMover, self).__init__()
         self.db = notmuch.Database(self.db_path)
         self.query = 'folder:{folder} AND {subquery}'
@@ -46,6 +46,7 @@ class MailMover(Database):
                                                        now=now.strftime('%s'))
         self.dry_run = dry_run
         self.rename = rename
+        self.only_first_rule = only_first_rule
 
     def get_new_name(self, fname, destination):
         if self.rename:
@@ -78,11 +79,18 @@ class MailMover(Database):
                                   if maildir in name]
                 if not to_move_fnames:
                     continue
-                self.__log_move_action(message, maildir, rules[query],
-                                       self.dry_run)
+
                 for fname in to_move_fnames:
-                    if self.dry_run:
+                    # avoid making multiple copies
+                    if self.only_first_rule and (fname in to_delete_fnames):
                         continue
+
+                    self.__log_move_action(message, maildir, rules[query],
+                                           self.dry_run)
+                    if self.dry_run:
+                        to_delete_fnames.append(fname)
+                        continue
+
                     try:
                         shutil.copy2(fname, self.get_new_name(fname, destination))
                         to_delete_fnames.append(fname)
@@ -90,13 +98,15 @@ class MailMover(Database):
                         # this is ugly, but shutil does not provide more
                         # finely individuated errors
                         if str(e).endswith("already exists"):
+                            print(str(e))
                             continue
                         else:
                             raise
 
         # remove mail from source locations only after all copies are finished
-        for fname in set(to_delete_fnames):
-            os.remove(fname)
+        if not self.dry_run:
+            for fname in set(to_delete_fnames):
+                os.remove(fname)
 
         # update notmuch database
         logging.info("updating database")
